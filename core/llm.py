@@ -57,7 +57,7 @@ def generate_single_slide(slide_info, md_content, user_asset_hints=None):
         hint_lines = []
         for item in user_asset_hints:
             hint_lines.append(
-                f"[{item.get('asset_id')}] tags={item.get('tags', [])}, ratio={item.get('aspect_ratio')}, size={item.get('width')}x{item.get('height')}"
+                f"[{item.get('asset_id')}] tags={item.get('tags', [])}, ratio={item.get('aspect_ratio')}"
             )
         assets_hint_text = "\n".join(hint_lines)
     

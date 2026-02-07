@@ -24,21 +24,17 @@ if not os.path.exists(UPLOAD_FOLDER):
 
 
 def get_image_meta(image_path):
-    """读取图片宽高与宽高比；环境不支持时返回空值。"""
+    """读取图片宽高比；环境不支持时返回空值。"""
     if not Image:
-        return {"width": None, "height": None, "aspect_ratio": None}
+        return {"aspect_ratio": None}
 
     try:
         with Image.open(image_path) as img:
             width, height = img.size
             ratio = round(width / height, 4) if height else None
-            return {
-                "width": width,
-                "height": height,
-                "aspect_ratio": ratio
-            }
+            return {"aspect_ratio": ratio}
     except Exception:
-        return {"width": None, "height": None, "aspect_ratio": None}
+        return {"aspect_ratio": None}
 
 # --- 1. 下载接口 ---
 @app.route('/api/download/<filename>', methods=['GET'])
@@ -105,8 +101,6 @@ def generate_ppt_stream():
             user_assets.append({
                 "path": img_save_path,
                 "tags": tags,
-                "width": img_meta["width"],
-                "height": img_meta["height"],
                 "aspect_ratio": img_meta["aspect_ratio"]
             })
             # print(f"   + 素材已入库: {safe_img_name}")

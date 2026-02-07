@@ -22,12 +22,10 @@ class GlobalImageMatcher:
                 self.img_map[img_id] = {
                     "path": asset['path'],
                     "desc": desc_str,
-                    "aspect_ratio": asset.get('aspect_ratio'),
-                    "width": asset.get('width'),
-                    "height": asset.get('height')
+                    "aspect_ratio": asset.get('aspect_ratio')
                 }
 
-    def run_matching(self, slides_data, user_asset_hints=None):
+    def run_matching(self, slides_data):
         """
         :param slides_data: LLM 生成的 PPT 页面数据
         :return: { (page_idx, element_idx): image_path }
@@ -85,7 +83,7 @@ class GlobalImageMatcher:
         prompt_images_text = []
         for img_id, info in self.img_map.items():
             prompt_images_text.append(
-                f"[{img_id}] {info['desc']} | ratio={info.get('aspect_ratio')} | size={info.get('width')}x{info.get('height')}"
+                f"[{img_id}] {info['desc']} | ratio={info.get('aspect_ratio')}"
             )
 
         debug_context = {

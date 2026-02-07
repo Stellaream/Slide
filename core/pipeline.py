@@ -35,9 +35,7 @@ def run_pipeline(docx_path, log_callback=None, user_assets=None):
             user_asset_hints.append({
                 "asset_id": f"I{idx + 1}",
                 "tags": asset.get("tags", []),
-                "aspect_ratio": asset.get("aspect_ratio"),
-                "width": asset.get("width"),
-                "height": asset.get("height")
+                "aspect_ratio": asset.get("aspect_ratio")
             })
     
     # 1. 文档解析
@@ -102,7 +100,7 @@ def run_pipeline(docx_path, log_callback=None, user_assets=None):
     
     matcher = GlobalImageMatcher(user_assets)
     # 得到匹配字典: { (页码idx, 元素idx): "path/to/img.jpg" }
-    mapping_result = matcher.run_matching(results, user_asset_hints=user_asset_hints)
+    mapping_result = matcher.run_matching(results)
 
     stock_mgr = None
     if os.path.exists(STOCK_DIR):
