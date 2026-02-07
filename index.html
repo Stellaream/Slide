@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI PPT 智能生成器</title>
+    <!-- 引入 Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 Vue 3 -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <!-- 图标库 -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .log-window::-webkit-scrollbar { width: 6px; }
+        .log-window::-webkit-scrollbar-track { background: #1f2937; }
+        .log-window::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 3px; }
+        [v-cloak] { display: none; }
+        /* 图片预览的 object-fit */
+        .img-preview { object-fit: cover; }
+    </style>
+</head>
+<body class="bg-slate-100 min-h-screen py-10">
+
+    <div id="app" class="max-w-4xl mx-auto px-4" v-cloak>
+        
+        <!-- 标题头 -->
+        <div class="text-center mb-10">
+            <h1 class="text-4xl font-bold text-slate-800 mb-2">
+                <i class="fa-solid fa-wand-magic-sparkles text-blue-600 mr-2"></i>AI PPT 生成器
+            </h1>
+            <p class="text-slate-500">智能语义理解 · 自动图文排版</p>
+        </div>
+
+        <!-- 主卡片 -->
+        <div class="bg-white rounded-xl shadow-xl overflow-hidden min-h-[600px] flex flex-col">
+            
+            <!-- 步骤条 -->
+            <div class="flex border-b border-slate-100">
+                <div v-for="(step, index) in steps" :key="index" 
+                     class="flex-1 py-4 text-center text-sm font-medium transition-colors duration-300"
+                     :class="currentStep >= index + 1 ? 'text-blue-600 bg-blue-50' : 'text-slate-400'">
+                    <span class="w-6 h-6 inline-flex items-center justify-center rounded-full border mr-2"
+                          :class="currentStep >= index + 1 ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-300'">
+                        {{ index + 1 }}
+                    </span>
+                    {{ step }}
+                </div>
+            </div>
+
+            <div class="p-8 flex-1 flex flex-col">
+                
+                <!-- 第一步：上传文档 -->
+                <div v-if="currentStep === 1" class="flex-1 flex flex-col justify-center">
+                    <div 
+                        class="border-2 border-dashed rounded-xl p-12 text-center cursor-pointer transition-colors duration-300"
+                        :class="isDragging ? 'border-blue-500 bg-blue-50' : 'border-slate-300 hover:border-blue-400'"
+                        @dragover.prevent="isDragging = true"
+                        @dragleave.prevent="isDragging = false"
+                        @drop.prevent="handleDrop"
+                        @click="$refs.fileInput.click()"
+                    >
+                        <input type="file" ref="fileInput" class="hidden" accept=".docx" @change="handleFileSelect">
+                        
+                        <div v-if="!docxFile">
+                            <i class="fa-solid fa-cloud-arrow-up text-5xl text-slate-300 mb-4"></i>
+                            <p class="text-xl text-slate-700 font-medium">点击或拖拽上传 .docx 文档</p>
+                            <p class="text-sm text-slate-400 mt-2">支持 Word 文档结构解析</p>
+                        </div>
+                        <div v-else>
+                            <i class="fa-solid fa-file-word text-5xl text-blue-600 mb-4"></i>
+                            <p class="text-xl text-slate-800 font-bold">{{ docxFile.name }}</p>
+                            <p class="text-sm text-green-600 mt-2 font-medium"><i class="fa-solid fa-check mr-1"></i>文件已就绪</p>
+                            <button @click.stop="docxFile = null" class="mt-4 text-sm text-red-400 hover:text-red-600 underline">移除重新上传</button>
+                        </div>
+                    </div>
+
+                    <button 
+                        @click="analyzeDoc" 
+                        :disabled="!docxFile"
+                        class="w-full mt-8 py-4 rounded-lg text-white font-bold text-lg shadow-lg transition-all duration-300"
+                        :class="!docxFile ? 'bg-slate-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 hover:shadow-blue-200'"
+                    >
+                        下一步：配置图片素材 <i class="fa-solid fa-arrow-right ml-2"></i>
+                    </button>
+                </div>
+
+                <!-- 第二步：图片素材管理 (核心改动) -->
+                <div v-if="currentStep === 2" class="flex-1 flex flex-col">
+                    <div class="mb-4 p-4 bg-blue-50 text-blue-900 rounded-lg text-sm border border-blue-200 flex items-start gap-3">
+                        <i class="fa-solid fa-circle-info mt-0.5 text-blue-600"></i>
+                        <div>
+                            <strong>智能配图模式：</strong>
+                            <p>请上传您想在 PPT 中展示的素材。AI 会根据您填写的<strong>“内容描述”</strong>，自动理解语义（例如：“服务器”匹配“算力设施”），将其插入到最合适的页面。</p>
+                        </div>
+                    </div>
+
+                    <!-- 图片网格 -->
+                    <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mb-6 overflow-y-auto max-h-[400px] p-1">
+                        
+                        <!-- 上传按钮卡片 -->
+                        <label class="aspect-[4/5] flex flex-col items-center justify-center border-2 border-dashed border-blue-300 rounded-xl cursor-pointer hover:bg-blue-50 text-blue-500 transition-colors bg-white">
+                            <i class="fa-solid fa-plus text-3xl mb-2"></i>
+                            <span class="text-sm font-bold">添加素材</span>
+                            <span class="text-xs text-blue-300 mt-1">支持多选</span>
+                            <input type="file" multiple accept="image/*" class="hidden" @change="handleImagesSelect">
+                        </label>
+
+                        <!-- 图片卡片 -->
+                        <div v-for="(img, idx) in userImages" :key="img.id" class="relative group bg-white border border-slate-200 rounded-xl shadow-sm hover:shadow-md transition-all flex flex-col overflow-hidden">
+                            <!-- 预览图 -->
+                            <div class="h-32 bg-slate-100 relative">
+                                <img :src="img.preview" class="w-full h-full img-preview" alt="preview">
+                                <!-- 删除按钮 -->
+                                <button @click="removeImage(idx)" class="absolute top-1 right-1 bg-red-500 text-white w-6 h-6 rounded-full flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity shadow-sm z-10">
+                                    <i class="fa-solid fa-times"></i>
+                                </button>
+                            </div>
+                            
+                            <!-- 描述输入 -->
+                            <div class="p-2 flex-1 flex flex-col">
+                                <label class="text-[10px] text-slate-400 font-bold mb-1 uppercase tracking-wider">图片内容描述</label>
+                                <textarea 
+                                    v-model="img.description" 
+                                    class="w-full text-xs p-2 border border-slate-200 rounded resize-none bg-slate-50 focus:bg-white focus:border-blue-500 focus:outline-none transition-colors flex-1"
+                                    placeholder="例如: 团队成员合照..."
+                                ></textarea>
+                            </div>
+                        </div>
+
+                    </div>
+
+                    <div class="mt-auto flex gap-4">
+                        <button @click="currentStep = 1" class="px-6 py-3 border border-slate-300 text-slate-600 rounded-lg hover:bg-slate-50 font-medium">
+                            上一步
+                        </button>
+                        <button @click="startGeneration" class="flex-1 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg font-bold shadow-lg hover:shadow-blue-500/30 transition-all hover:scale-[1.01]">
+                            <i class="fa-solid fa-rocket mr-2"></i> 开始生成 (已选 {{ userImages.length }} 张)
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 第三步：生成中/完成 -->
+                <div v-if="currentStep === 3" class="flex-1 flex flex-col">
+                    
+                    <!-- 状态展示 -->
+                    <div v-if="!isFinished" class="text-center py-6">
+                        <div class="inline-block animate-spin rounded-full h-12 w-12 border-4 border-blue-100 border-t-blue-600 mb-4"></div>
+                        <h3 class="text-xl font-bold text-slate-800">AI 正在构建演示文稿...</h3>
+                        <p class="text-slate-500 text-sm mt-1">深度阅读文档 · 语义匹配图片 · 自动排版渲染</p>
+                    </div>
+
+                    <div v-else class="text-center py-6">
+                        <div class="inline-flex items-center justify-center w-20 h-20 bg-green-100 text-green-600 rounded-full mb-4 text-4xl">
+                            <i class="fa-solid fa-check"></i>
+                        </div>
+                        <h3 class="text-2xl font-bold text-slate-800">生成完成！</h3>
+                        
+                        <div class="mt-8 flex flex-col sm:flex-row justify-center gap-4">
+                            <a :href="downloadUrl" download class="px-8 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 shadow-lg font-bold transition-all transform hover:-translate-y-1">
+                                <i class="fa-solid fa-download mr-2"></i> 下载 PPTX 文件
+                            </a>
+                            <button @click="reset" class="px-8 py-3 border border-slate-300 text-slate-600 rounded-lg hover:bg-slate-50 transition-colors">
+                                再做一个
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 真实日志窗口 -->
+                    <div class="mt-auto bg-slate-900 rounded-lg p-4 font-mono text-xs log-window h-48 overflow-y-auto border border-slate-700 shadow-inner">
+                        <div v-for="(log, idx) in logs" :key="idx" class="mb-1 border-l-2 pl-2" :class="getBorderColor(log.type)">
+                            <span class="text-slate-500 mr-2">[{{ log.time }}]</span>
+                            <span :class="getTextColor(log.type)">{{ log.msg }}</span>
+                        </div>
+                        <div v-if="!isFinished" class="animate-pulse text-blue-400 mt-2">_</div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+        
+        <p class="text-center text-slate-400 text-sm mt-8">© 2025 AI PPT Generator</p>
+
+    </div>
+
+    <script>
+        const { createApp, ref, nextTick } = Vue;
+
+        createApp({
+            setup() {
+                const currentStep = ref(1);
+                const steps = ['上传文档', '配置素材', '生成结果'];
+                const docxFile = ref(null);
+                const isDragging = ref(false);
+                const isFinished = ref(false);
+                const logs = ref([]);
+                const downloadUrl = ref('#');
+                
+                // 新增：用户图片状态数组
+                // 结构: [{ id, file, preview, description }]
+                const userImages = ref([]); 
+
+                // ----------------------------------------------------
+                // Step 1: 文件处理
+                // ----------------------------------------------------
+                const handleDrop = (e) => {
+                    isDragging.value = false;
+                    const file = e.dataTransfer.files[0];
+                    if (file && file.name.endsWith('.docx')) docxFile.value = file;
+                    else alert("请上传 .docx 文件");
+                };
+
+                const handleFileSelect = (e) => {
+                    const file = e.target.files[0];
+                    if (file) docxFile.value = file;
+                };
+
+                const analyzeDoc = () => {
+                    currentStep.value = 2;
+                };
+
+                // ----------------------------------------------------
+                // Step 2: 图片处理 (关键改动)
+                // ----------------------------------------------------
+                const handleImagesSelect = (e) => {
+                    const files = Array.from(e.target.files);
+                    
+                    const newItems = files.map(file => {
+                        // 默认描述：去掉后缀的文件名
+                        const defaultDesc = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
+                        
+                        return {
+                            id: Date.now() + Math.random(), // 唯一ID
+                            file: file,
+                            preview: URL.createObjectURL(file), // 生成预览URL
+                            description: defaultDesc.replace(/[_-]/g, ' ') // 简单清洗默认描述
+                        };
+                    });
+
+                    userImages.value = [...userImages.value, ...newItems];
+                    e.target.value = ''; // 重置 input 以便能重复选
+                };
+
+                const removeImage = (index) => {
+                    // 释放内存
+                    URL.revokeObjectURL(userImages.value[index].preview);
+                    userImages.value.splice(index, 1);
+                };
+
+                // ----------------------------------------------------
+                // Step 3: 生成与流式接收
+                // ----------------------------------------------------
+                const startGeneration = async () => {
+                    currentStep.value = 3;
+                    isFinished.value = false;
+                    logs.value = []; 
+                    
+                    const formData = new FormData();
+                    formData.append('file', docxFile.value);
+
+                    // --- 关键：打包图片和描述 ---
+                    userImages.value.forEach(item => {
+                        // 1. 追加文件
+                        formData.append('images', item.file);
+                        
+                        // 2. 追加描述 (确保不为空)
+                        const safeDesc = item.description.trim() || "未命名图片";
+                        formData.append('image_descriptions', safeDesc);
+                    });
+
+                    try {
+                        const response = await fetch('http://localhost:5000/api/generate', {
+                            method: 'POST',
+                            body: formData
+                        });
+
+                        const reader = response.body.getReader();
+                        const decoder = new TextDecoder("utf-8");
+                        let buffer = '';
+
+                        while (true) {
+                            const { done, value } = await reader.read();
+                            if (done) break;
+
+                            buffer += decoder.decode(value, { stream: true });
+                            const lines = buffer.split('\n');
+                            buffer = lines.pop(); 
+
+                            for (const line of lines) {
+                                if (!line.trim()) continue;
+                                try {
+                                    const data = JSON.parse(line);
+                                    
+                                    if (data.type === 'done') {
+                                        const filename = data.filename;
+                                        downloadUrl.value = `http://localhost:5000/api/download/${filename}`;
+                                        isFinished.value = true;
+                                    } else if (data.type === 'error') {
+                                        addLog('error', `❌ 错误: ${data.msg}`);
+                                    } else {
+                                        // 过滤掉我们不想显示的“初步构建”等日志，只显示干净的
+                                        addLog(data.type, data.msg);
+                                    }
+                                } catch (e) {
+                                    console.error("JSON Error:", e);
+                                }
+                            }
+                        }
+
+                    } catch (error) {
+                        addLog('error', `网络连接失败: ${error.message}`);
+                    }
+                };
+
+                // ----------------------------------------------------
+                // 工具函数
+                // ----------------------------------------------------
+                const addLog = (type, msg) => {
+                    const time = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+                    logs.value.push({ time, type, msg });
+                    nextTick(() => {
+                        const win = document.querySelector('.log-window');
+                        if (win) win.scrollTop = win.scrollHeight;
+                    });
+                };
+
+                const getTextColor = (type) => {
+                    if (type === 'error') return 'text-red-400 font-bold';
+                    if (type === 'success') return 'text-green-400 font-bold';
+                    if (type === 'warning') return 'text-yellow-400';
+                    return 'text-blue-200';
+                };
+                
+                const getBorderColor = (type) => {
+                    if (type === 'error') return 'border-red-500';
+                    if (type === 'success') return 'border-green-500';
+                    if (type === 'warning') return 'border-yellow-500';
+                    return 'border-blue-800';
+                };
+
+                const reset = () => {
+                    currentStep.value = 1;
+                    docxFile.value = null;
+                    // 清理预览图内存
+                    userImages.value.forEach(i => URL.revokeObjectURL(i.preview));
+                    userImages.value = [];
+                    logs.value = [];
+                };
+
+                return {
+                    currentStep, steps, docxFile, isDragging, isFinished, logs, downloadUrl,
+                    userImages, // 暴露给模板
+                    handleDrop, handleFileSelect, analyzeDoc, startGeneration,
+                    handleImagesSelect, removeImage, // 新增方法
+                    getTextColor, getBorderColor, reset
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>

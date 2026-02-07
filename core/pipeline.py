@@ -1,0 +1,148 @@
+# core/pipeline.py
+import os
+import concurrent.futures
+from pptx import Presentation
+from engine.renderer import ProRenderer
+from engine.size import fix_ppt_with_drag_simulation
+from engine.image_manager import GlobalImageMatcher, StockManager
+
+from config import OUTPUT_DIR, STOCK_DIR 
+from utils import save_debug_file, get_random_background, extract_elements_robust
+from core.content import docx_to_markdown, collect_ref_chunks
+from core.llm import get_ppt_outline, generate_single_slide
+
+def run_pipeline(docx_path, log_callback=None, user_assets=None):
+    """
+    全自动化 PPT 生成流水线
+    :param docx_path: 输入文档路径
+    :param log_callback: (可选) 回调函数 func(msg, type)，用于向前端推送实时日志
+    :return: 最终生成的 PPT 文件路径
+    """
+
+    # --- 内部辅助函数：双向日志 ---
+    # 既打印到后台控制台，也推送到前端
+    def log(msg, log_type="info"):
+        print(f"[{log_type.upper()}] {msg}")
+        if log_callback:
+            log_callback(msg, log_type)
+
+    log("启动全自动化 PPT 生成流程...", "info")
+    
+    # 1. 文档解析
+    log("正在解析原始文档...", "info")
+    chunks = docx_to_markdown(docx_path)
+    if not chunks:
+        log("❌ 文档解析失败，内容为空", "error")
+        return None
+    save_debug_file("source_chunks.json", chunks)
+
+
+    # 2. 生成大纲
+    log("AI 正在深度阅读文档并规划大纲 (Chain-of-Thought)...", "info")
+    outline = get_ppt_outline(chunks)
+    if not outline:
+        log("❌ 大纲生成为空，流程终止。", "error")
+        return None
+    
+    log(f"✅ 大纲规划完成，共 {len(outline)} 页。准备生成详细内容...", "success")
+    save_debug_file("outline.json", outline)
+    
+    # 3. 准备背景
+    bg_path = get_random_background()
+
+    # 4. 并行生成详细页面
+    results = [None] * len(outline)
+    completed_count = 0 
+    
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        future_to_slide = {}
+        for item in outline:
+            idx = item["index"]
+
+            # 1. 抽取该页引用的原文
+            content = collect_ref_chunks(item, chunks)
+
+            # 2. 保存 debug：每一页喂给模型的原文
+            # save_debug_file(f"slide_{idx}_source.txt", content, is_json=False)
+
+            # 3. 提交给 LLM
+            future = executor.submit(generate_single_slide, item, content)
+            future_to_slide[future] = item
+        
+        for future in concurrent.futures.as_completed(future_to_slide):
+            slide_info = future_to_slide[future]
+            idx = slide_info['index']
+            try:
+                res = future.result()
+                results[idx - 1] = res
+                
+                completed_count += 1
+                log(f"正在构建页面内容与布局... ({completed_count}/{len(outline)})", "info")
+                
+            except Exception as e:
+                # 错误日志还是保留页码方便排查，但用 warning 级别
+                log(f"⚠️ 第 {idx} 页生成线程异常: {e}", "warning")
+
+    save_debug_file("merged.json", results)
+
+    # 5. 图片资源的智能处理
+    log("正在进行图片资源的全局匹配...", "info")
+    
+    matcher = GlobalImageMatcher(user_assets)
+    # 得到匹配字典: { (页码idx, 元素idx): "path/to/img.jpg" }
+    mapping_result = matcher.run_matching(results)
+
+    stock_mgr = None
+    if os.path.exists(STOCK_DIR):
+        print(f"加载本地图库: {STOCK_DIR}") 
+        stock_mgr = StockManager(assets_dir=STOCK_DIR)
+    else:
+        print(f"⚠️ 未找到 stock 文件夹，兜底功能失效")
+        stock_mgr = StockManager(assets_dir=None)
+    
+    # 6. 渲染阶段
+    log("正在启动渲染引擎...", "info")
+    prs = Presentation()
+    renderer = ProRenderer(prs)
+    
+    for page_idx, slide_data in enumerate(results):
+        elements = extract_elements_robust(slide_data)
+        if not elements: continue
+
+        slide = prs.slides.add_slide(prs.slide_layouts[6])
+        
+        for el_idx, el in enumerate(elements):
+            final_img_path = None
+            
+            # 优先用 AI 分配的用户图
+            if (page_idx, el_idx) in mapping_result:
+                final_img_path = mapping_result[(page_idx, el_idx)]
+            
+            # 没图则用本地库兜底
+            elif el.get('type') == 'image' and stock_mgr:
+                final_img_path = stock_mgr.pick_next()
+
+            try:
+                renderer.render_element(slide, el, force_image_path=final_img_path)
+            except Exception as e:
+                print(f"渲染异常: {e}")
+
+    # 7. 背景与保存
+    if bg_path:
+        log("正在应用全局视觉风格...", "info")
+        renderer.add_background_to_all_slides(bg_path)
+
+    origin_path = os.path.join(OUTPUT_DIR, "Origin.pptx")
+    prs.save(origin_path)
+    
+    # 8. 字号修复
+    if os.path.exists(origin_path):
+        log("正在启动 PowerPoint 引擎进行版式自适应修复...", "info")
+        try:
+            # 调用 engine/size.py 中的逻辑
+            fix_ppt_with_drag_simulation(origin_path)
+            log("✅ 全流程完成！最终文件已生成。", "success")
+        except Exception as e:
+            log(f"⚠️ 字号修复失败 (可能需要 Windows 环境): {e}", "warning")
+            
+    return origin_path

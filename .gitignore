@@ -1,0 +1,8 @@
+__pycache__/
+debug_logs/
+output/
+uploads/
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
