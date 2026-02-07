@@ -21,10 +21,13 @@ class GlobalImageMatcher:
                 desc_str = ", ".join(asset.get('tags', []))
                 self.img_map[img_id] = {
                     "path": asset['path'],
-                    "desc": desc_str
+                    "desc": desc_str,
+                    "aspect_ratio": asset.get('aspect_ratio'),
+                    "width": asset.get('width'),
+                    "height": asset.get('height')
                 }
 
-    def run_matching(self, slides_data):
+    def run_matching(self, slides_data, user_asset_hints=None):
         """
         :param slides_data: LLM 生成的 PPT 页面数据
         :return: { (page_idx, element_idx): image_path }
@@ -37,6 +40,9 @@ class GlobalImageMatcher:
         
         # 1. 提取所有图片坑位
         for p_idx, slide in enumerate(slides_data):
+            if not isinstance(slide, dict):
+                continue
+
             elements = slide.get('elements', [])
             for e_idx, el in enumerate(elements):
                 if el.get('type') == 'image':
@@ -47,10 +53,26 @@ class GlobalImageMatcher:
                     content = el.get('content', '无描述')
                     
                     # 记录映射关系，以便后续根据 S0 找到具体的页码和元素索引
-                    slot_map[slot_id] = {"page": p_idx, "el_idx": e_idx, "desc": content}
+                    pos = el.get('pos', {})
+                    box_ratio = None
+                    try:
+                        if isinstance(pos, dict):
+                            w = float(pos.get('w', 0))
+                            h = float(pos.get('h', 0))
+                            if h > 0:
+                                box_ratio = round(w / h, 4)
+                    except Exception:
+                        box_ratio = None
+
+                    slot_map[slot_id] = {
+                        "page": p_idx,
+                        "el_idx": e_idx,
+                        "desc": content,
+                        "box_ratio": box_ratio
+                    }
                     
                     # 按照要求的格式拼接文本: [S0]: 描述内容
-                    prompt_slots_text.append(f"[{slot_id}]: {content}")
+                    prompt_slots_text.append(f"[{slot_id}]: {content} | box_ratio={box_ratio}")
                     
                     # 计数器自增
                     global_slot_idx += 1
@@ -62,7 +84,9 @@ class GlobalImageMatcher:
         # 2. 构造资源文本
         prompt_images_text = []
         for img_id, info in self.img_map.items():
-            prompt_images_text.append(f"[{img_id}] {info['desc']}")
+            prompt_images_text.append(
+                f"[{img_id}] {info['desc']} | ratio={info.get('aspect_ratio')} | size={info.get('width')}x{info.get('height')}"
+            )
 
         debug_context = {
             "slots_sent_to_llm": prompt_slots_text,
@@ -108,9 +132,10 @@ class GlobalImageMatcher:
 
         【分配规则 (重要)】
         1. 语义匹配：根据描述的相关性进行匹配（如“团队”匹配“合照”）。
-        2. 宁缺毋滥：如果某张图完全不相关，**不要强行分配**，直接忽略该 Slot ID。
-        3. 格式严格：返回 JSON 对象。Key 是 Slot ID，Value 是 Image ID。
-        4. 禁止幻觉：绝对不要返回资源列表中不存在的 Image ID。
+        2. 比例匹配：优先让图片 ratio 接近对应 slot 的 box_ratio，尽量避免横图塞竖框或竖图塞横框。
+        3. 宁缺毋滥：如果某张图完全不相关，**不要强行分配**，直接忽略该 Slot ID。
+        4. 格式严格：返回 JSON 对象。Key 是 Slot ID，Value 是 Image ID。
+        5. 禁止幻觉：绝对不要返回资源列表中不存在的 Image ID。
 
         【输出示例】
         {{

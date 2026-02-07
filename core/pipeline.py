@@ -27,6 +27,18 @@ def run_pipeline(docx_path, log_callback=None, user_assets=None):
             log_callback(msg, log_type)
 
     log("启动全自动化 PPT 生成流程...", "info")
+
+    # 供 LLM 预感知的用户图片信息（语义+尺寸）
+    user_asset_hints = []
+    if user_assets:
+        for idx, asset in enumerate(user_assets):
+            user_asset_hints.append({
+                "asset_id": f"I{idx + 1}",
+                "tags": asset.get("tags", []),
+                "aspect_ratio": asset.get("aspect_ratio"),
+                "width": asset.get("width"),
+                "height": asset.get("height")
+            })
     
     # 1. 文档解析
     log("正在解析原始文档...", "info")
@@ -66,7 +78,7 @@ def run_pipeline(docx_path, log_callback=None, user_assets=None):
             # save_debug_file(f"slide_{idx}_source.txt", content, is_json=False)
 
             # 3. 提交给 LLM
-            future = executor.submit(generate_single_slide, item, content)
+            future = executor.submit(generate_single_slide, item, content, user_asset_hints)
             future_to_slide[future] = item
         
         for future in concurrent.futures.as_completed(future_to_slide):
@@ -90,7 +102,7 @@ def run_pipeline(docx_path, log_callback=None, user_assets=None):
     
     matcher = GlobalImageMatcher(user_assets)
     # 得到匹配字典: { (页码idx, 元素idx): "path/to/img.jpg" }
-    mapping_result = matcher.run_matching(results)
+    mapping_result = matcher.run_matching(results, user_asset_hints=user_asset_hints)
 
     stock_mgr = None
     if os.path.exists(STOCK_DIR):

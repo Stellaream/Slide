@@ -6,6 +6,11 @@ from flask import Flask, request, send_file, jsonify, Response, stream_with_cont
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
+try:
+    from PIL import Image
+except Exception:
+    Image = None
+
 # 导入核心逻辑
 from core.pipeline import run_pipeline
 from config import OUTPUT_DIR
@@ -16,6 +21,24 @@ CORS(app)
 UPLOAD_FOLDER = 'uploads'
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
+
+
+def get_image_meta(image_path):
+    """读取图片宽高与宽高比；环境不支持时返回空值。"""
+    if not Image:
+        return {"width": None, "height": None, "aspect_ratio": None}
+
+    try:
+        with Image.open(image_path) as img:
+            width, height = img.size
+            ratio = round(width / height, 4) if height else None
+            return {
+                "width": width,
+                "height": height,
+                "aspect_ratio": ratio
+            }
+    except Exception:
+        return {"width": None, "height": None, "aspect_ratio": None}
 
 # --- 1. 下载接口 ---
 @app.route('/api/download/<filename>', methods=['GET'])
@@ -66,6 +89,7 @@ def generate_ppt_stream():
             safe_img_name = secure_filename(img.filename)
             img_save_path = os.path.join(UPLOAD_FOLDER, safe_img_name)
             img.save(img_save_path)
+            img_meta = get_image_meta(img_save_path)
             
             # 处理描述/标签
             # 1. 保留原始描述用于 LLM 语义理解
@@ -80,7 +104,10 @@ def generate_ppt_stream():
             
             user_assets.append({
                 "path": img_save_path,
-                "tags": tags
+                "tags": tags,
+                "width": img_meta["width"],
+                "height": img_meta["height"],
+                "aspect_ratio": img_meta["aspect_ratio"]
             })
             # print(f"   + 素材已入库: {safe_img_name}")
 

@@ -47,15 +47,27 @@ def get_ppt_outline(chunks):
         print(f"❌ 生成大纲失败: {e}")
         return []
 
-def generate_single_slide(slide_info, md_content):
+def generate_single_slide(slide_info, md_content, user_asset_hints=None):
     """第二阶段：生成单页布局"""
     idx = slide_info['index']
     print(f"正在设计第 {idx} 页: {slide_info['title']}")
+
+    assets_hint_text = "无可用用户图片信息"
+    if user_asset_hints:
+        hint_lines = []
+        for item in user_asset_hints:
+            hint_lines.append(
+                f"[{item.get('asset_id')}] tags={item.get('tags', [])}, ratio={item.get('aspect_ratio')}, size={item.get('width')}x{item.get('height')}"
+            )
+        assets_hint_text = "\n".join(hint_lines)
     
     prompt = f"""
     你是一名 PPT 专家，针对主题 '{slide_info['title']}'，根据参考内容设计一页高水平科创大赛答辩 PPT 布局。
     核心要点：{slide_info['focus']}
     参考原文：{md_content[:8000]}
+
+    用户图片库信息（用于提前规划图框比例和位置）：
+    {assets_hint_text}
     
     Action Protocol 规范
     1. 使用 16x9 栅格系统 (pos: x, y, w, h)，必须确保：
@@ -65,6 +77,7 @@ def generate_single_slide(slide_info, md_content):
         - 严禁重叠。
     2. 类型仅限: "text" (文字容器), "image" (图片留白框)。
     3. style 包含: bold (加粗), align (center/left), color (十六进制), bg_color (背景色/默认transparent), border (布尔值)。
+    3.1 图片框比例建议：若用户图片库存在明显的横图(>1.3)或竖图(<0.8)，请优先采用对应宽高比的 image 框，避免极端拉伸裁切。
     4. 样式一致： 一个元素(element)内部只能有一种 color。禁止在同一个 content 中混合多种颜色。
     5. 视觉对齐：标题通常占据 x:1, y:1, w:10, h:1.5，正文与图片应水平对齐（y相同）或垂直分布。
     6. 标题标签化：对于大标题和小标题，配色体现科创标签感（比如浅蓝色系）。
