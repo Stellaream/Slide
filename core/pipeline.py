@@ -28,7 +28,7 @@ def run_pipeline(docx_path, log_callback=None, user_assets=None):
 
     log("启动全自动化 PPT 生成流程...", "info")
 
-    # 供 LLM 预感知的用户图片信息（语义+尺寸）
+    # 0. 供 LLM 预感知的用户图片信息（语义+尺寸）
     user_asset_hints = []
     if user_assets:
         for idx, asset in enumerate(user_assets):

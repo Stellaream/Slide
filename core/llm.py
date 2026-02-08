@@ -57,7 +57,7 @@ def generate_single_slide(slide_info, md_content, user_asset_hints=None):
         hint_lines = []
         for item in user_asset_hints:
             hint_lines.append(
-                f"[{item.get('asset_id')}] tags={item.get('tags', [])}, ratio={item.get('aspect_ratio')}"
+                f"[{item.get('asset_id')}] tags={item.get('tags', [])}, ratio(width/height)={item.get('aspect_ratio')}"
             )
         assets_hint_text = "\n".join(hint_lines)
     
@@ -65,26 +65,25 @@ def generate_single_slide(slide_info, md_content, user_asset_hints=None):
     你是一名 PPT 专家，针对主题 '{slide_info['title']}'，根据参考内容设计一页高水平科创大赛答辩 PPT 布局。
     核心要点：{slide_info['focus']}
     参考原文：{md_content[:8000]}
-
-    用户图片库信息（用于提前规划图框比例和位置）：
-    {assets_hint_text}
+    用户图片库信息：{assets_hint_text}
     
     Action Protocol 规范
     1. 使用 16x9 栅格系统 (pos: x, y, w, h)，必须确保：
         - (当前元素的 x + w) 永远小于等于 16。
         - (当前元素的 y + h) 永远小于等于 9。
         - 元素之间必须保留合适单位的“视觉呼吸感”间距。
-        - 严禁重叠。
+        - 严禁重叠(即一个对象的 x+w 和 y+h 不能超过另一个对象的 x,y)。
     2. 类型仅限: "text" (文字容器), "image" (图片留白框)。
     3. style 包含: bold (加粗), align (center/left), color (十六进制), bg_color (背景色/默认transparent), border (布尔值)。
-    3.1 图片框比例建议：若用户图片库存在明显的横图(>1.3)或竖图(<0.8)，请优先采用对应宽高比的 image 框，避免极端拉伸裁切。
-    4. 样式一致： 一个元素(element)内部只能有一种 color。禁止在同一个 content 中混合多种颜色。
+    4. 样式一致：禁止在同一个 content 中混合多种颜色。
     5. 视觉对齐：标题通常占据 x:1, y:1, w:10, h:1.5，正文与图片应水平对齐（y相同）或垂直分布。
     6. 标题标签化：对于大标题和小标题，配色体现科创标签感（比如浅蓝色系）。
     7. 内容卡片化：对于正文块，建议设置 bg_color: "#FFFFFF", border: true，使其呈现为白色卡片感。
-    8. 所有元素平级放在 elements 数组中。
-    9. 文字容器中内容不要使用 markdown 语法，只需纯文本。
-    10. 不要重叠（即一个对象的 x+w 和 y+h 不能超过另一个对象的 x,y）。
+    8. 文字容器中内容不要使用 markdown 语法，只需纯文本。
+    9. 图片选取优先级：
+        - 如果图片库中有高契合度图片，请优先使用对应宽高比的 image 框展示该图片，并在 content 中标注对应 tag；
+        - 如果没有合适的用户图片，可以将 content 留空，作为后续人工补图的提示。
+    10. 图片框比例：若用户图片库存在明显的横图(>1.2)或竖图(<0.8)，请优先采用对应宽高比的 image 框，避免极端拉伸裁切，其余图片尽量比例适中(0.8-1.2)。
     
     排版建议示例 (Few-shot)
     - 左右分栏示例: [
@@ -98,10 +97,10 @@ def generate_single_slide(slide_info, md_content, user_asset_hints=None):
     2. 黄金起跑线：
         - 主标题建议放在 y: 0.5 到 y: 1 之间。
         - 正文内容建议从 y: 2 或 y: 2.5 开始。
-    3. 留白平衡：底部的 y=8 到 y=9 区域应留出更多空白（用于放置页码或作为视觉呼吸区），除非内容极多。
+    3. 留白平衡：底部的 y=8 到 y=9 区域应留出更多空白（作为视觉呼吸区），除非内容极多。
     4. 纵向紧凑：在 16x9 系统下，纵向高度非常宝贵，请尽量压缩组件的 h (高度)，确保核心内容处于视觉上半区。
     
-    直接输出 JSON 对象，必须包含 "elements" 键。
+    直接输出 JSON 对象，必须包含 "elements" 键，所有元素平级放在 elements 数组中。
     """
     
     try:

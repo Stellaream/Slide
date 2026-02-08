@@ -129,7 +129,7 @@ def collect_ref_chunks(slide_info, chunks, max_len=8000):
     for cid in ref_ids:
         for ch in chunks:
             if ch["chunk_id"] == cid:
-                contents.append(f"[片段ID:{cid}]\n{ch['content']}")
+                contents.append(f"{ch['content']}")
                 break
 
     merged = "\n\n".join(contents)
