@@ -1,17 +1,36 @@
 # core/llm.py
 import json
+import re
 from openai import OpenAI
 from config import API_KEY, BASE_URL, MODEL_NAME
-from utils import save_debug_file
 
-# 初始化客户端
+# 初始化客户端 (阿里云 DashScope)
 client = OpenAI(api_key=API_KEY, base_url=BASE_URL)
+
+def clean_json_response(content):
+    """
+    清洗模型返回的内容，提取 JSON 部分。
+    即使模型开启了 JSON 模式，有时也会包裹 ```json ... ```，需要去除。
+    """
+    try:
+        # 尝试直接解析
+        return json.loads(content)
+    except json.JSONDecodeError:
+        # 如果失败，尝试去除 markdown 标记
+        content = content.replace("```json", "").replace("```", "").strip()
+        # 有时候模型会在 JSON 后跟一些废话，尝试提取第一个 {} 闭合区间（简单版）
+        # 这里使用正则提取最外层的 JSON 对象
+        match = re.search(r'(\{.*\})', content, re.DOTALL)
+        if match:
+            return json.loads(match.group(1))
+        # 再次尝试直接解析清洗后的文本
+        return json.loads(content)
 
 def get_ppt_outline(chunks):
     """第一阶段：生成大纲"""
-    print("正在规划 PPT 逻辑大纲 (15-20页)...")
+    print(f"[{MODEL_NAME}] 正在规划 PPT 逻辑大纲 (15-20页)...")
 
-    # 造带有显式 ID 标记的上下文
+    # 构造带有显式 ID 标记的上下文
     context_text = ""
     for item in chunks:
         context_text += f"[片段ID: {item['chunk_id']}]\n{item['content']}\n\n"
@@ -24,25 +43,34 @@ def get_ppt_outline(chunks):
     封面页内容不宜过多，正文页需突出核心论点和数据支撑。
     对于每页 PPT，列出该页内容主要参考的原文[片段ID]（整数列表）。
     
-    返回 JSON 格式如下：
+    【输出要求】
+    必须返回符合 JSON 语法的纯文本，不要包含任何 markdown 格式标记（如 ```json）。
+    格式如下：
     {{
         "outline": [
-        {{"index": 1, "title": "标题", "focus": "本页核心论点及需要展示的数据/图表建议", "ref_chunks": [1, 3, 5]}},
+            {{"index": 1, "title": "标题", "focus": "本页核心论点及需要展示的数据/图表建议", "ref_chunks": [1, 3, 5]}},
+            ...
         ]
     }}
     文档内容：{context_text[:15000]}
     """
+    
     try:
         response = client.chat.completions.create(
             model=MODEL_NAME,
             messages=[
-                {"role": "system", "content": "你是一个只输出 JSON 的策划专家。"},
+                {"role": "system", "content": "你是一个专业的 PPT 策划专家，请直接输出 JSON 数据。"},
                 {"role": "user", "content": prompt}
             ],
-            response_format={ "type": "json_object" } 
+            # 只有支持 json_object 的模型才加这个参数，Qwen-plus 通常支持，但为了兼容性，依靠 prompt 约束也可
+            response_format={"type": "json_object"}, 
+            temperature=0.2, # 降低随机性，提高 JSON 结构稳定性
         )
-        res_data = json.loads(response.choices[0].message.content)
-        return res_data["outline"]
+        
+        content = response.choices[0].message.content
+        res_data = clean_json_response(content)
+        return res_data.get("outline", [])
+        
     except Exception as e:
         print(f"❌ 生成大纲失败: {e}")
         return []
@@ -50,7 +78,7 @@ def get_ppt_outline(chunks):
 def generate_single_slide(slide_info, md_content, user_asset_hints=None):
     """第二阶段：生成单页布局"""
     idx = slide_info['index']
-    print(f"正在设计第 {idx} 页: {slide_info['title']}")
+    print(f"[{MODEL_NAME}] 正在设计第 {idx} 页: {slide_info['title']}")
 
     assets_hint_text = "无可用用户图片信息"
     if user_asset_hints:
@@ -62,56 +90,77 @@ def generate_single_slide(slide_info, md_content, user_asset_hints=None):
         assets_hint_text = "\n".join(hint_lines)
     
     prompt = f"""
-    你是一名 PPT 专家，针对主题 '{slide_info['title']}'，根据参考内容设计一页高水平科创大赛答辩 PPT 布局。
+    你是一名 PPT 设计专家。请根据以下要求设计第 {idx} 页 PPT "{slide_info['title']}" 的布局 JSON。
+    
     核心要点：{slide_info['focus']}
     参考原文：{md_content[:8000]}
-    用户图片库信息：{assets_hint_text}
+    用户图片库：{assets_hint_text}
+
+    【设计目标】根据核心要点提炼出本页的关键信息，合理利用用户图片库中的素材（如果有合适的），并设计一个清晰、专业、美观的布局方案。
     
-    Action Protocol 规范
-    1. 使用 16x9 栅格系统 (pos: x, y, w, h)，必须确保：
-        - (当前元素的 x + w) 永远小于等于 16。
-        - (当前元素的 y + h) 永远小于等于 9。
-        - 元素之间必须保留合适单位的“视觉呼吸感”间距。
-        - 严禁重叠(即一个对象的 x+w 和 y+h 不能超过另一个对象的 x,y)。
-    2. 类型仅限: "text" (文字容器), "image" (图片留白框)。
-    3. style 包含: bold (加粗), align (center/left), color (十六进制), bg_color (背景色/默认transparent), border (布尔值)。
-    4. 样式一致：禁止在同一个 content 中混合多种颜色。
-    5. 视觉对齐：标题通常占据 x:1, y:1, w:10, h:1.5，正文与图片应水平对齐（y相同）或垂直分布。
-    6. 标题标签化：对于大标题和小标题，配色体现科创标签感（比如浅蓝色系）。
-    7. 内容卡片化：对于正文块，建议设置 bg_color: "#FFFFFF", border: true，使其呈现为白色卡片感。
-    8. 文字容器中内容不要使用 markdown 语法，只需纯文本。
-    9. 图片选取优先级：
-        - 如果图片库中有高契合度图片，请优先使用对应宽高比的 image 框展示该图片，并在 content 中标注对应 tag；
-        - 如果没有合适的用户图片，可以将 content 留空，作为后续人工补图的提示。
-    10. 图片框比例：若用户图片库存在明显的横图(>1.2)或竖图(<0.8)，请优先采用对应宽高比的 image 框，避免极端拉伸裁切，其余图片尽量比例适中(0.8-1.2)。
+    【排版规范 (16x9 网格)】
+    1. 画布大小 16x9 (x=0~16, y=0~9)。严禁元素重叠。
+    2. 允许的元素类型 (type)：
+    - "title": 页面大标题，通常位于顶部 (y=0~1.5)，高度约 1-1.5。
+    - "card": 复合卡片，包含小标题和正文。**必须包含 "subtitle" 和 "content" 两个字段**。适合展示分点论述。
+    - "text": 普通文本框。适合纯段落或简单列表。
+    - "image": 图片框。
+    3. 样式 (style) 要求：
+    - 对于 "text" 类型，必须在 style 中指定 "font_size" 和 "align" ("left", "center")。
+    - 对于 "card" 类型，建议背景设为 "#FFFFFF"。
+    4. 图片策略：优先使用用户图片库中的 asset_id；若无合适图片，type="image" 且 content 留空作为占位符。
     
-    排版建议示例 (Few-shot)
-    - 左右分栏示例: [
-        {{"type": "text", "pos": {{"x": 1, "y": 1.5, "w": 10, "h": 1}}, "content": "标题", "style": {{"bold": true}}}},
-        {{"type": "text", "pos": {{"x": 1, "y": 3, "w": 5, "h": 7}}, "content": "要点描述...", "style": {{}}}},
-        {{"type": "image", "pos": {{"x": 6.5, "y": 3, "w": 4.5, "h": 7}}, "content": "此处应展示一张算法架构逻辑图"}}
-        ]
-    
-    视觉重心优化准则
-    1. 利用顶部空间，不要产生“内容下沉”感。
-    2. 黄金起跑线：
-        - 主标题建议放在 y: 0.5 到 y: 1 之间。
-        - 正文内容建议从 y: 2 或 y: 2.5 开始。
-    3. 留白平衡：底部的 y=8 到 y=9 区域应留出更多空白（作为视觉呼吸区），除非内容极多。
-    4. 纵向紧凑：在 16x9 系统下，纵向高度非常宝贵，请尽量压缩组件的 h (高度)，确保核心内容处于视觉上半区。
-    
-    直接输出 JSON 对象，必须包含 "elements" 键，所有元素平级放在 elements 数组中。
+    【输出格式示例】
+    {{
+    "elements": [
+        {{
+        "type": "title", 
+        "pos": {{"x": 1, "y": 0.5, "w": 14, "h": 1.2}}, 
+        "content": "核心技术架构"
+        }},
+        {{
+        "type": "text", 
+        "pos": {{"x": 1, "y": 2, "w": 14, "h": 0.8}}, 
+        "content": "本架构采用分层设计，确保高可用性与扩展性。",
+        "style": {{"font_size": 16, "align": "center", "bold": false}}
+        }},
+        {{
+        "type": "card", 
+        "pos": {{"x": 1, "y": 3, "w": 4, "h": 4}}, 
+        "subtitle": "感知层",
+        "content": "集成多模态传感器\n实时数据采集", 
+        "style": {{"bg_color": "#FFFFFF"}}
+        }},
+        {{
+        "type": "image", 
+        "pos": {{"x": 6, "y": 3, "w": 9, "h": 4}}, 
+        "content": "img_asset_123" 
+        }}
+    ]
+    }}
     """
     
     try:
         response = client.chat.completions.create(
             model=MODEL_NAME,
-            messages=[{"role": "user", "content": prompt}]
+            messages=[
+                {"role": "system", "content": "你是一个 PPT 布局算法，只输出 JSON。"},
+                {"role": "user", "content": prompt}
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.2, 
         )
-        raw_content = response.choices[0].message.content
-        clean_json = raw_content.replace("```json", "").replace("```", "").strip()
-        slide_data = json.loads(clean_json)
+        
+        content = response.choices[0].message.content
+        slide_data = clean_json_response(content)
+        
+        # 简单校验数据完整性
+        if "elements" not in slide_data:
+            print(f"⚠️ 第 {idx} 页生成数据缺失 elements 字段")
+            return None
+            
         return slide_data
+
     except Exception as e:
         print(f"⚠️ 第 {idx} 页生成出错: {e}")
         return None
