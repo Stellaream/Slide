@@ -1,11 +1,11 @@
 import os
 
-API_KEY = "sk-3c0fa0eddd5d4a47a340258641cd99fe"
+API_KEY = os.getenv("QWEN_API_KEY")
 BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 MODEL_NAME = "qwen3.5-plus" 
 
 if not API_KEY:
-    raise ValueError("未检测到环境变量 DEEPSEEK_API_KEY，请先设置你的 API Key")
+    raise ValueError("未检测到环境变量 API_KEY，请先设置你的 API Key")
 
 try:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))

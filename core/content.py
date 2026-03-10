@@ -4,7 +4,6 @@ import re
 def clean_text(text):
     """
     深度清洗 Markdown 文本，并强制段落分行。
-    (保持不变：去噪、去空格、双换行重组)
     """
     # 1. 去除图片占位符
     text = re.sub(r'\[image:.*?\]', '', text)
@@ -29,7 +28,6 @@ def clean_text(text):
 def chunk_text_with_overlap(text, chunk_size=800, overlap=100):
     """
     带重叠的滑动窗口分块，保持段落间距。
-    (保持不变：处理超长段落、段落累积、重叠回溯)
     """
     if not text:
         return []
@@ -134,3 +132,18 @@ def collect_ref_chunks(slide_info, chunks, max_len=8000):
 
     merged = "\n\n".join(contents)
     return merged[:max_len]
+
+def collect_ref_images(slide_info, user_asset_hints):
+    """
+    根据 slide_info["ref_images"] 抽取对应用户图片信息
+    """
+    ref_ids = slide_info.get("ref_images", [])
+    images = []
+
+    for rid in ref_ids:
+        for img in user_asset_hints:
+            if img["asset_id"] == rid:
+                images.append(img)
+                break
+
+    return images

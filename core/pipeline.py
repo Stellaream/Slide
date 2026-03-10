@@ -7,8 +7,8 @@ from engine.size import fix_ppt_with_drag_simulation
 from engine.image_manager import GlobalImageMatcher, StockManager
 
 from config import OUTPUT_DIR, STOCK_DIR 
-from utils import save_debug_file, get_random_background, extract_elements_robust
-from core.content import docx_to_markdown, collect_ref_chunks
+from utils import save_debug_file, get_random_background, extract_elements_robust, calculate_overlap, calculate_alignment, calculate_layout_score
+from core.content import docx_to_markdown, collect_ref_chunks, collect_ref_images
 from core.llm import get_ppt_outline, generate_single_slide
 
 def run_pipeline(docx_path, log_callback=None, user_assets=None):
@@ -37,6 +37,7 @@ def run_pipeline(docx_path, log_callback=None, user_assets=None):
                 "tags": asset.get("tags", []),
                 "aspect_ratio": asset.get("aspect_ratio")
             })
+        log(f"检测到 {len(user_asset_hints)} 张用户图片，将参与大纲规划...", "info")
     
     # 1. 文档解析
     log("正在解析原始文档...", "info")
@@ -48,8 +49,8 @@ def run_pipeline(docx_path, log_callback=None, user_assets=None):
 
 
     # 2. 生成大纲
-    log("AI 正在深度阅读文档并规划大纲 (Chain-of-Thought)...", "info")
-    outline = get_ppt_outline(chunks)
+    log("AI 正在深度阅读文档并规划大纲 ...", "info")
+    outline = get_ppt_outline(chunks, user_asset_hints)
     if not outline:
         log("❌ 大纲生成为空，流程终止。", "error")
         return None
@@ -60,40 +61,94 @@ def run_pipeline(docx_path, log_callback=None, user_assets=None):
     # 3. 准备背景
     bg_path = get_random_background()
 
-    # 4. 并行生成详细页面
-    results = [None] * len(outline)
-    completed_count = 0 
+
+    # 4. 并行生成详细页面 (每页生成2次选优)
+    results = [None] * len(outline)       # 存放每次的最优结果
+    worst_results = [None] * len(outline) # 存放每次的较差结果，用于对比
     
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-        future_to_slide = {}
+    completed_slides = 0 
+    
+    # 记录每页生成成功的候选结果: { idx:[res1, res2] }
+    slide_candidates = {item["index"]:[] for item in outline}
+    
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        future_to_info = {}
+        
         for item in outline:
             idx = item["index"]
 
-            # 1. 抽取该页引用的原文
+            # 抽取该页引用的原文与图片
             content = collect_ref_chunks(item, chunks)
+            page_images = collect_ref_images(item, user_asset_hints)
 
-            # 2. 保存 debug：每一页喂给模型的原文
-            # save_debug_file(f"slide_{idx}_source.txt", content, is_json=False)
-
-            # 3. 提交给 LLM
-            future = executor.submit(generate_single_slide, item, content, user_asset_hints)
-            future_to_slide[future] = item
+            # 为每一页提交 2 次生成任务
+            for candidate_id in range(2):
+                future = executor.submit(
+                    generate_single_slide,
+                    item,
+                    content,
+                    page_images
+                )
+                # 记录这个 future 属于哪一页的第几次生成
+                future_to_info[future] = {"index": idx, "candidate_id": candidate_id}
         
-        for future in concurrent.futures.as_completed(future_to_slide):
-            slide_info = future_to_slide[future]
-            idx = slide_info['index']
+        # 收集结果
+        for future in concurrent.futures.as_completed(future_to_info):
+            info = future_to_info[future]
+            idx = info["index"]
+            
             try:
                 res = future.result()
-                results[idx - 1] = res
-                
-                completed_count += 1
-                log(f"正在构建页面内容与布局... ({completed_count}/{len(outline)})", "info")
-                
+                slide_candidates[idx].append(res)
             except Exception as e:
-                # 错误日志还是保留页码方便排查，但用 warning 级别
-                log(f"⚠️ 第 {idx} 页生成线程异常: {e}", "warning")
+                log(f"⚠️ 第 {idx} 页 (候选 {info['candidate_id']}) 生成线程异常: {e}", "warning")
+                # 即使失败也塞入一个 None 占位，以便后续判断该页两次任务都已结束
+                slide_candidates[idx].append(None)
+            
+            # 当该页的 2 次任务全部执行完毕时，进行打分比较
+            if len(slide_candidates[idx]) == 2:
+                # 过滤掉生成失败的 None 结果
+                valid_candidates =[c for c in slide_candidates[idx] if c is not None]
+                
+                best_res = None
+                worst_res = None
+                
+                if len(valid_candidates) == 2:
+                    # 两次都成功，计算得分并比较
+                    score_list =[]
+                    for c in valid_candidates:
+                        elements = c.get("elements",[])
+                        overlap_err = calculate_overlap(elements)
+                        align_err = calculate_alignment(elements)
+                        score = calculate_layout_score(overlap_err, align_err)
+                        score_list.append(score)
+                    
+                    # 取分数高的作为 best，低的作为 worst
+                    if score_list[0] >= score_list[1]:
+                        best_res, worst_res = valid_candidates[0], valid_candidates[1]
+                        best_res["_layout_score"] = score_list[0] # 可选：将分数记录在 JSON 中方便你调试看
+                        worst_res["_layout_score"] = score_list[1]
+                    else:
+                        best_res, worst_res = valid_candidates[1], valid_candidates[0]
+                        best_res["_layout_score"] = score_list[1]
+                        worst_res["_layout_score"] = score_list[0]
+                        
+                elif len(valid_candidates) == 1:
+                    best_res = valid_candidates[0]
+                    worst_res = None 
+                else:
+                    log(f"❌ 第 {idx} 页两次生成均失败！", "error")
+                
+                # 按照原始索引存入对应的数组位
+                results[idx - 1] = best_res
+                worst_results[idx - 1] = worst_res
+                
+                completed_slides += 1
+                log(f"正在构建页面内容与布局并择优... ({completed_slides}/{len(outline)})", "info")
 
-    save_debug_file("merged.json", results)
+    # 分别保存最优结果与淘汰结果
+    save_debug_file("merged.json", results) 
+    save_debug_file("merged_worst.json", worst_results)
 
     # 5. 图片资源的智能处理
     log("正在进行图片资源的全局匹配...", "info")

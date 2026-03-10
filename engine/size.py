@@ -15,7 +15,7 @@ def fix_ppt_with_drag_simulation(input_path):
 
     print(f"正在调整字号并覆盖源文件: {os.path.basename(abs_input)} ...")
     
-    # 1. 初始化 COM (多线程必须)
+    # 初始化 COM (多线程必须)
     pythoncom.CoInitialize()
     ppt_app = None
     prs = None
@@ -59,9 +59,7 @@ def fix_ppt_with_drag_simulation(input_path):
         import traceback
         traceback.print_exc()
         
-    finally:
-        # --- 关键修改：资源释放区 ---
-        
+    finally:  
         # 1. 关闭演示文稿
         if prs:
             try:
@@ -69,7 +67,7 @@ def fix_ppt_with_drag_simulation(input_path):
             except:
                 pass
 
-        # 2. 退出 PowerPoint 软件 (这是你要求的)
+        # 2. 退出 PowerPoint 软件
         if ppt_app:
             try:
                 ppt_app.Quit()
@@ -79,13 +77,3 @@ def fix_ppt_with_drag_simulation(input_path):
         
         # 3. 释放 COM 环境
         pythoncom.CoUninitialize()
-
-if __name__ == "__main__":
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(current_dir)
-    target_input = os.path.join(project_root, "output", "Origin.pptx")
-    
-    if os.path.exists(target_input):
-        fix_ppt_with_drag_simulation(target_input)
-    else:
-        print(f"❌ 未找到输入文件: {target_input}")

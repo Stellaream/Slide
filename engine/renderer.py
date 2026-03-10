@@ -67,7 +67,7 @@ class ProRenderer:
         tf.vertical_anchor = MSO_ANCHOR.MIDDLE 
         tf.word_wrap = True 
         
-        # 【核心修改】根据 auto_size 参数决定策略
+        # 根据 auto_size 参数决定策略
         if auto_size:
             tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
         else:
@@ -116,9 +116,7 @@ class ProRenderer:
         subtitle = el.get('subtitle', '')
         style = el.get('style', {})
 
-        # ====================================================
         # 1. Title (大标题 - 保持醒目风格)
-        # ====================================================
         if el_type == 'title':
             shape = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, l, t, w, h)
             shape.adjustments[0] = 0.2
@@ -139,9 +137,7 @@ class ProRenderer:
                 auto_size=True 
             )
 
-        # ====================================================
         # 2. Text (普通文本 - 智能判定 Explicit vs Auto)
-        # ====================================================
         elif el_type == 'text':
             shape = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, l, t, w, h)
             
@@ -163,7 +159,7 @@ class ProRenderer:
             is_bold = style.get('bold', False)
             text_color = style.get('color', THEME['primary'] if is_bold else THEME['text_main'])
             
-            # 【核心逻辑】检查 font_size 是否设置
+            # 检查 font_size 是否设置
             specified_fs = style.get('font_size')
             
             if specified_fs:
@@ -181,12 +177,10 @@ class ProRenderer:
                 font_size=fs_val,  
                 color=text_color, 
                 bold=is_bold,
-                auto_size=use_auto_size # 传入判定结果
+                auto_size=use_auto_size
             )
 
-        # ====================================================
-        # 3. Card (经典分割线风格)
-        # ====================================================
+        # 3. Card
         elif el_type == 'card':
             # 背景容器
             bg_shape = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, l, t, w, h)
@@ -225,13 +219,11 @@ class ProRenderer:
             # 卡片内容通常由 AutoSize 兜底，防止溢出
             self._apply_text_frame_style(
                 body_box, content, 
-                align='left', font_size=16, color=THEME['text_main'], bold=False, margin=8,
+                align='center', font_size=16, color=THEME['text_main'], bold=False, margin=8,
                 auto_size=True
             )
 
-        # ====================================================
         # 4. Image
-        # ====================================================
         elif el_type == 'image':
             img_path = force_image_path
             
@@ -283,121 +275,22 @@ class ProRenderer:
             pic.height = target_h
 
     def add_background_to_all_slides(self, image_path):
-        if not image_path or not os.path.exists(image_path): return
+        if not image_path or not os.path.exists(image_path):
+            return
+
         for slide in self.prs.slides:
             try:
-                pic = slide.shapes.add_picture(image_path, 0, 0, width=self.prs.slide_width, height=self.prs.slide_height)
-                try:
-                    blip = pic._element.blipFill.blip
-                    lum = OxmlElement('a:lum')
-                    lum.set('bright', '40000')    
-                    lum.set('contrast', '-40000') 
-                    blip.append(lum)
-                except: pass
+                pic = slide.shapes.add_picture(
+                    image_path, 0, 0,
+                    width=self.prs.slide_width,
+                    height=self.prs.slide_height
+                )
+
+                # 放到底层
                 spTree = slide.shapes._spTree
                 element = pic._element
                 spTree.remove(element)
                 spTree.insert(2, element)
-            except: pass
 
-# ==========================================
-# 测试代码
-# ==========================================
-if __name__ == "__main__":
-    
-    test_slide_json = {
-        "index": 1,
-        "title": "核心技术方案概述页",
-        "elements": [
-            # 1. 标题 (默认 AutoSize)
-            {
-                "type": "title",
-                "pos": {"x": 1, "y": 0.5, "w": 14, "h": 1},
-                "content": "核心技术方案概述",
-                "style": {"bg_color": "transparent"}
-            },
-            
-            # 2. Text (显式设置 font_size，测试固定字号)
-            {
-                "type": "text",
-                "pos": { "x": 1, "y": 1.6, "w": 6, "h": 0.5 },
-                "content": "",
-                "style": { 
-                    "bold": False, 
-                    "bg_color": "#EFEFEF", 
-                    "align": "left",
-                    "font_size": 12 # <--- 显式设置
-                }
-            },
-            
-            
-            # 4. Cards (经典风格：Line + Subtitle)
-            {
-                "type": "card",
-                "subtitle": "材料创新",
-                "pos": { "x": 0.5, "y": 2.5, "w": 2.8, "h": 3.5 },
-                "content": "液态金属基导电薄膜\n低迟滞聚氨酯介质\n仿水膜 - 鱼网结构",
-                "style": { "bg_color": "#FFFFFF" }
-            },
-            {
-                "type": "card",
-                "subtitle": "硬件架构",
-                "pos": { "x": 3.5, "y": 2.5, "w": 2.8, "h": 3.5 },
-                "content": "光纤-IMU 混合架构\n硬件级漂移抑制\n目标精度 0.1mm",
-                "style": { "bg_color": "#FFFFFF" }
-            },
-            {
-                "type": "card",
-                "subtitle": "核心算法",
-                "pos": { "x": 6.5, "y": 2.5, "w": 2.8, "h": 3.5 },
-                "content": "分层手势识别模型\n多滑动窗口自适应分割\n分割精度>97%",
-                "style": { "bg_color": "#FFFFFF" }
-            },
-            {
-                "type": "card",
-                "subtitle": "系统集成",
-                "pos": { "x": 9.5, "y": 2.5, "w": 2.8, "h": 3.5 },
-                "content": "多模态闭环交互\n压力梯度与温控反馈\n标准化协议对接",
-                "style": { "bg_color": "#FFFFFF" }
-            },
-            {
-                "type": "card",
-                "subtitle": "验证测试",
-                "pos": { "x": 12.5, "y": 2.5, "w": 2.8, "h": 3.5 },
-                "content": "国产设备无缝对接\n场景压力测试\n10+ 主流设备兼容",
-                "style": { "bg_color": "#FFFFFF" }
-            },
-            
-            {
-                "type": "image",
-                "pos": {"x": 0.5, "y": 6.5, "w": 7, "h": 2},
-                "content": "架构图占位",
-                "style": {"bg_color": "#F0F0F0", "border": "dashed"}
-            },
-            {
-                "type": "card",
-                "subtitle": "关键性能指标",
-                "pos": {"x": 8, "y": 6.5, "w": 7.5, "h": 2},
-                "content": "● 端到端延迟：<50ms\n● 空间分辨率：0.1mm 级\n● 抗干扰能力：复杂环境鲁棒性\n● 自主可控：全栈自研技术链",
-                "style": {"bg_color": "#FFFFFF"}
-            }
-        ]
-    }
-
-    print("🚀 开始 PPT 渲染测试 (混合字号模式)...")
-    prs = Presentation()
-    blank_layout = prs.slide_layouts[6] 
-    slide = prs.slides.add_slide(blank_layout)
-    
-    renderer = ProRenderer(prs)
-    
-    for el in test_slide_json["elements"]:
-        renderer.render_element(slide, el)
-
-    output_filename = "mixed_fontsize_logic.pptx"
-    
-    try:
-        prs.save(output_filename)
-        print(f"✅ 测试完成！文件已保存为: {os.path.abspath(output_filename)}")
-    except PermissionError:
-        print(f"❌ 保存失败：请先关闭 {output_filename} 文件。")
+            except Exception as e:
+                pass
